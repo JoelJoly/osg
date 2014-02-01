@@ -29,96 +29,129 @@
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
-const double r_earth = 6378.137;
-const double r_sun = 695990.0;
-const double AU = 149697900.0;
+#include "DeferredCamera.h"
 
-osg::Node* createScene()
+namespace
 {
-    // Create the Earth, in blue
-    osg::ShapeDrawable *earth_sd = new osg::ShapeDrawable;
-    osg::Sphere* earth_sphere = new osg::Sphere;
-    earth_sphere->setName("EarthSphere");
-    earth_sphere->setRadius(r_earth);
-    earth_sd->setShape(earth_sphere);
-    earth_sd->setColor(osg::Vec4(0, 0, 1.0, 1.0));
+    const double r_earth = 6378.137;
+    const double r_sun = 695990.0;
+    const double AU = 149697900.0;
 
-    osg::Geode* earth_geode = new osg::Geode;
-    earth_geode->setName("EarthGeode");
-    earth_geode->addDrawable(earth_sd);
-
-    // Create the Sun, in yellow
-    osg::ShapeDrawable *sun_sd = new osg::ShapeDrawable;
-    osg::Sphere* sun_sphere = new osg::Sphere;
-    sun_sphere->setName("SunSphere");
-    sun_sphere->setRadius(r_sun);
-    sun_sd->setShape(sun_sphere);
-    sun_sd->setColor(osg::Vec4(1.0, 0.0, 0.0, 1.0));
-
-    osg::Geode* sun_geode = new osg::Geode;
-    sun_geode->setName("SunGeode");
-    sun_geode->addDrawable(sun_sd);
-
-    // Move the sun behind the earth
-    osg::PositionAttitudeTransform *pat = new osg::PositionAttitudeTransform;
-    pat->setPosition(osg::Vec3d(0.0, AU, 0.0));
-    pat->addChild(sun_geode);
-
-    osg::Geometry * unitCircle = new osg::Geometry();
+    osg::Node* createScene()
     {
-      osg::Vec4Array * colours = new osg::Vec4Array(1);
-      (*colours)[0] = osg::Vec4d(1.0,1.0,1.0,1.0);
-      unitCircle->setColorArray(colours, osg::Array::BIND_OVERALL);
-      const unsigned int n_points = 1024;
-      osg::Vec3Array * coords = new osg::Vec3Array(n_points);
-      const double dx = 2.0*osg::PI/n_points;
-      double s,c;
-      for (unsigned int j=0; j<n_points; ++j) {
-    s = sin(dx*j);
-    c = cos(dx*j);
-    (*coords)[j].set(osg::Vec3d(c,s,0.0));
-      }
-      unitCircle->setVertexArray(coords);
-      unitCircle->getOrCreateStateSet()->setMode(GL_LIGHTING,osg::StateAttribute::OFF);
-      unitCircle->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINE_LOOP,0,n_points));
+        // Create the Earth, in blue
+        osg::ShapeDrawable *earth_sd = new osg::ShapeDrawable;
+        osg::Sphere* earth_sphere = new osg::Sphere;
+        earth_sphere->setName("EarthSphere");
+        earth_sphere->setRadius(r_earth);
+        earth_sd->setShape(earth_sphere);
+        earth_sd->setColor(osg::Vec4(0, 0, 1.0, 1.0));
+
+        osg::Geode* earth_geode = new osg::Geode;
+        earth_geode->setName("EarthGeode");
+        earth_geode->addDrawable(earth_sd);
+
+        // Create the Sun, in yellow
+        osg::ShapeDrawable *sun_sd = new osg::ShapeDrawable;
+        osg::Sphere* sun_sphere = new osg::Sphere;
+        sun_sphere->setName("SunSphere");
+        sun_sphere->setRadius(r_sun);
+        sun_sd->setShape(sun_sphere);
+        sun_sd->setColor(osg::Vec4(1.0, 0.0, 0.0, 1.0));
+
+        osg::Geode* sun_geode = new osg::Geode;
+        sun_geode->setName("SunGeode");
+        sun_geode->addDrawable(sun_sd);
+
+        // Move the sun behind the earth
+        osg::PositionAttitudeTransform *pat = new osg::PositionAttitudeTransform;
+        pat->setPosition(osg::Vec3d(0.0, AU, 0.0));
+        pat->addChild(sun_geode);
+
+        osg::Geometry * unitCircle = new osg::Geometry();
+        {
+          osg::Vec4Array * colours = new osg::Vec4Array(1);
+          (*colours)[0] = osg::Vec4d(1.0,1.0,1.0,1.0);
+          unitCircle->setColorArray(colours, osg::Array::BIND_OVERALL);
+          const unsigned int n_points = 1024;
+          osg::Vec3Array * coords = new osg::Vec3Array(n_points);
+          const double dx = 2.0*osg::PI/n_points;
+          double s,c;
+          for (unsigned int j=0; j<n_points; ++j) {
+        s = sin(dx*j);
+        c = cos(dx*j);
+        (*coords)[j].set(osg::Vec3d(c,s,0.0));
+          }
+          unitCircle->setVertexArray(coords);
+          unitCircle->getOrCreateStateSet()->setMode(GL_LIGHTING,osg::StateAttribute::OFF);
+          unitCircle->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINE_LOOP,0,n_points));
+        }
+
+        osg::Geometry *axes = new osg::Geometry;
+        {
+          osg::Vec4Array *colours = new osg::Vec4Array(1);
+          (*colours)[0] = osg::Vec4d(1.0,0.0,0.0,1.0);
+          axes->setColorArray(colours, osg::Array::BIND_OVERALL);
+          osg::Vec3Array *coords = new osg::Vec3Array(6);
+          (*coords)[0].set(osg::Vec3d(0.0, 0.0, 0.0));
+          (*coords)[1].set(osg::Vec3d(0.5, 0.0, 0.0));
+          (*coords)[2].set(osg::Vec3d(0.0, 0.0, 0.0));
+          (*coords)[3].set(osg::Vec3d(0.0, 0.5, 0.0));
+          (*coords)[4].set(osg::Vec3d(0.0, 0.0, 0.0));
+          (*coords)[5].set(osg::Vec3d(0.0, 0.0, 0.5));
+          axes->setVertexArray(coords);
+          axes->getOrCreateStateSet()->setMode(GL_LIGHTING,osg::StateAttribute::OFF);
+          axes->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINES,0,6));
+        }
+
+        // Earth orbit
+        osg::Geode * earthOrbitGeode = new osg::Geode;
+        earthOrbitGeode->addDrawable(unitCircle);
+        earthOrbitGeode->addDrawable(axes);
+        earthOrbitGeode->setName("EarthOrbitGeode");
+
+        osg::PositionAttitudeTransform * earthOrbitPAT = new osg::PositionAttitudeTransform;
+        earthOrbitPAT->setScale(osg::Vec3d(AU,AU,AU));
+        earthOrbitPAT->setPosition(osg::Vec3d(0.0, AU, 0.0));
+        earthOrbitPAT->addChild(earthOrbitGeode);
+        earthOrbitPAT->setName("EarthOrbitPAT");
+
+        osg::Group* scene = new osg::Group;
+        scene->setName("SceneGroup");
+        scene->addChild(earth_geode);
+        scene->addChild(pat);
+        scene->addChild(earthOrbitPAT);
+
+        return scene;
+    }
+    osg::ref_ptr<DeferredCamera> createDeferredCamera()
+    {
+        const int width( 800 ), height( 450 );
+        osg::ref_ptr< osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits();
+        traits->x = 20; traits->y = 30;
+        traits->width = width; traits->height = height;
+        traits->windowDecoration = true;
+        traits->doubleBuffer = true;
+        traits->depth = true;
+        osg::ref_ptr<osg::GraphicsContext> gc = osg::GraphicsContext::createGraphicsContext( traits.get() );
+        if (! gc.valid())
+        {
+            osg::notify( osg::FATAL ) << "Unable to create OpenGL context." << std::endl;
+            return nullptr;
+        }
+
+        // Create a Camera that uses the above OpenGL context.
+        osg::ref_ptr<DeferredCamera> deferredCamera = new DeferredCamera();
+
+        deferredCamera->setGraphicsContext(gc.get());
+        // Must set perspective projection for fovy and aspect.
+        deferredCamera->setProjectionMatrix(osg::Matrix::perspective(30., (double)width/(double)height, 1., 100.));
+        // Unlike OpenGL, OSG viewport does *not* default to window dimensions.
+        deferredCamera->setViewport(new osg::Viewport(0, 0, width, height));
+        deferredCamera->setComputeNearFarMode(osg::CullSettings::COMPUTE_NEAR_FAR_USING_BOUNDING_VOLUMES);
+        return deferredCamera;
     }
 
-    osg::Geometry *axes = new osg::Geometry;
-    {
-      osg::Vec4Array *colours = new osg::Vec4Array(1);
-      (*colours)[0] = osg::Vec4d(1.0,0.0,0.0,1.0);
-      axes->setColorArray(colours, osg::Array::BIND_OVERALL);
-      osg::Vec3Array *coords = new osg::Vec3Array(6);
-      (*coords)[0].set(osg::Vec3d(0.0, 0.0, 0.0));
-      (*coords)[1].set(osg::Vec3d(0.5, 0.0, 0.0));
-      (*coords)[2].set(osg::Vec3d(0.0, 0.0, 0.0));
-      (*coords)[3].set(osg::Vec3d(0.0, 0.5, 0.0));
-      (*coords)[4].set(osg::Vec3d(0.0, 0.0, 0.0));
-      (*coords)[5].set(osg::Vec3d(0.0, 0.0, 0.5));
-      axes->setVertexArray(coords);
-      axes->getOrCreateStateSet()->setMode(GL_LIGHTING,osg::StateAttribute::OFF);
-      axes->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINES,0,6));
-    }
-
-    // Earth orbit
-    osg::Geode * earthOrbitGeode = new osg::Geode;
-    earthOrbitGeode->addDrawable(unitCircle);
-    earthOrbitGeode->addDrawable(axes);
-    earthOrbitGeode->setName("EarthOrbitGeode");
-
-    osg::PositionAttitudeTransform * earthOrbitPAT = new osg::PositionAttitudeTransform;
-    earthOrbitPAT->setScale(osg::Vec3d(AU,AU,AU));
-    earthOrbitPAT->setPosition(osg::Vec3d(0.0, AU, 0.0));
-    earthOrbitPAT->addChild(earthOrbitGeode);
-    earthOrbitPAT->setName("EarthOrbitPAT");
-
-    osg::Group* scene = new osg::Group;
-    scene->setName("SceneGroup");
-    scene->addChild(earth_geode);
-    scene->addChild(pat);
-    scene->addChild(earthOrbitPAT);
-
-    return scene;
 }
 
 int main( int argc, char **argv )
@@ -128,9 +161,6 @@ int main( int argc, char **argv )
 
     // construct the viewer.
     osgViewer::Viewer viewer;
-
-    // add the state manipulator
-    viewer.addEventHandler( new osgGA::StateSetManipulator(viewer.getCamera()->getOrCreateStateSet()) );
 
     // add stats
     viewer.addEventHandler( new osgViewer::StatsHandler() );
@@ -146,9 +176,14 @@ int main( int argc, char **argv )
         scene = createScene();
         needToSetHomePosition = true;
     }
+    osg::ref_ptr<DeferredCamera> camera = createDeferredCamera();
+    // use the deferred camera for the viewer
+    viewer.setCamera(camera.get());
     // pass the loaded scene graph to the viewer.
     viewer.setSceneData(scene.get());
 
+    // add the state manipulator
+    viewer.addEventHandler( new osgGA::StateSetManipulator(viewer.getCamera()->getOrCreateStateSet()) );
     viewer.setCameraManipulator(new osgGA::TrackballManipulator);
 
     if (needToSetHomePosition)
