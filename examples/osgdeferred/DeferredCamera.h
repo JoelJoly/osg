@@ -1,5 +1,7 @@
 #include <osg/Camera>
 
+#include <memory>
+
 /** Camera pre configured for deferred shading.
 */
 class DeferredCamera : public osg::Camera
@@ -12,4 +14,8 @@ public:
 
 private:
     void constructorInit();
+
+private:
+    struct PImpl;
+    std::unique_ptr<PImpl> pImpl_;
 };
