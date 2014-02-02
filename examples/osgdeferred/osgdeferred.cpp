@@ -144,6 +144,7 @@ namespace
         osg::ref_ptr<DeferredCamera> deferredCamera = new DeferredCamera();
 
         deferredCamera->setGraphicsContext(gc.get());
+        deferredCamera->getSlaveCamera()->setGraphicsContext(gc.get());
         // Must set perspective projection for fovy and aspect.
         deferredCamera->setProjectionMatrix(osg::Matrix::perspective(30., (double)width/(double)height, 1., 100.));
         // Unlike OpenGL, OSG viewport does *not* default to window dimensions.
@@ -179,6 +180,7 @@ int main( int argc, char **argv )
     osg::ref_ptr<DeferredCamera> camera = createDeferredCamera();
     // use the deferred camera for the viewer
     viewer.setCamera(camera.get());
+    viewer.addSlave(camera->getSlaveCamera(), false);
     // pass the loaded scene graph to the viewer.
     viewer.setSceneData(scene.get());
 

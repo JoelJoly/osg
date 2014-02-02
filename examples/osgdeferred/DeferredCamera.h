@@ -12,6 +12,8 @@ public:
     /** Copy constructor using CopyOp to manage deep vs shallow copy.*/
     DeferredCamera(const Camera&,const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
 
+    osg::Camera* getSlaveCamera();
+
 private:
     void constructorInit();
 
