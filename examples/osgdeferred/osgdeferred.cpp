@@ -124,35 +124,6 @@ namespace
 
         return scene;
     }
-    osg::ref_ptr<DeferredCamera> createDeferredCamera()
-    {
-        const int width( 800 ), height( 450 );
-        osg::ref_ptr< osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits();
-        traits->x = 20; traits->y = 30;
-        traits->width = width; traits->height = height;
-        traits->windowDecoration = true;
-        traits->doubleBuffer = true;
-        traits->depth = true;
-        osg::ref_ptr<osg::GraphicsContext> gc = osg::GraphicsContext::createGraphicsContext( traits.get() );
-        if (! gc.valid())
-        {
-            osg::notify( osg::FATAL ) << "Unable to create OpenGL context." << std::endl;
-            return nullptr;
-        }
-
-        // Create a Camera that uses the above OpenGL context.
-        osg::ref_ptr<DeferredCamera> deferredCamera = new DeferredCamera();
-
-        deferredCamera->setGraphicsContext(gc.get());
-        deferredCamera->getSlaveCamera()->setGraphicsContext(gc.get());
-        // Must set perspective projection for fovy and aspect.
-        deferredCamera->setProjectionMatrix(osg::Matrix::perspective(30., (double)width/(double)height, 1., 100.));
-        // Unlike OpenGL, OSG viewport does *not* default to window dimensions.
-        deferredCamera->setViewport(new osg::Viewport(0, 0, width, height));
-        deferredCamera->setComputeNearFarMode(osg::CullSettings::COMPUTE_NEAR_FAR_USING_BOUNDING_VOLUMES);
-        return deferredCamera;
-    }
-
 }
 
 int main( int argc, char **argv )
@@ -177,10 +148,7 @@ int main( int argc, char **argv )
         scene = createScene();
         needToSetHomePosition = true;
     }
-    osg::ref_ptr<DeferredCamera> camera = createDeferredCamera();
-    // use the deferred camera for the viewer
-    viewer.setCamera(camera.get());
-    viewer.addSlave(camera->getSlaveCamera(), false);
+    install(viewer);
     // pass the loaded scene graph to the viewer.
     viewer.setSceneData(scene.get());
 

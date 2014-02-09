@@ -2,24 +2,33 @@
 
 # include <osg/Geode>
 # include <osg/Geometry>
+# include <osg/GraphicsContext>
 # include <osg/Shader>
 # include <osg/StateSet>
 # include <osg/Texture2D>
 # include <osg/TextureRectangle>
 
+# include <osgViewer/Renderer>
+# include <osgViewer/View>
+
 # include <deque>
+# include <cstdint>
 
 using namespace osg;
 
 namespace
 {
-    const uint8_t  NUM_TEXTURES = 4;
+    const uint8_t   NUM_TEXTURES = 4;
+    // use width and height big enough so that the view will never bigger than this
+    const uint32_t  defaultWidth = 2048;//800;
+    const uint32_t  defaultHeight = 2048;//450;
 }
 
-struct DeferredCamera::PImpl
+struct DeferredCamera::PImpl : public osg::GraphicsContext::ResizedCallback
 {
-    PImpl() {}
-    void constuctStateSet(osg::Camera* camera, osg::StateSet* stateSet)
+    PImpl(DeferredCamera& camera) : mainCamera_(camera), previousResizedCallback_(nullptr) {}
+    ~PImpl() {}
+    void constuctStateSet(osg::StateSet* stateSet)
     {
         mrtStateSet_ = stateSet;
         static const char *vertexShaderSource = {
@@ -59,7 +68,7 @@ struct DeferredCamera::PImpl
             textureRect->setInternalFormat(GL_RGBA);
             textureRect->setFilter(osg::Texture2D::MIN_FILTER, osg::Texture2D::LINEAR);
             textureRect->setFilter(osg::Texture2D::MAG_FILTER, osg::Texture2D::LINEAR);
-            camera->attach(osg::Camera::BufferComponent(osg::Camera::COLOR_BUFFER0+i), textureRect);
+            mainCamera_.attach(osg::Camera::BufferComponent(osg::Camera::COLOR_BUFFER0+i), textureRect);
             fboTextures_.push_back(textureRect);
         }
     }
@@ -68,7 +77,12 @@ struct DeferredCamera::PImpl
         for (auto textureIte(fboTextures_.cbegin()), textureEnd(fboTextures_.cend()); textureIte != textureEnd; ++textureIte)
         {
             (*textureIte)->setTextureSize(tex_width, tex_height);
+            auto i = std::distance(fboTextures_.cbegin(), textureIte);
+            mainCamera_.attach(osg::Camera::BufferComponent(osg::Camera::COLOR_BUFFER0+i), *textureIte);
         }
+        osgViewer::Renderer* renderer = dynamic_cast<osgViewer::Renderer*>(mainCamera_.getRenderer());
+        if (renderer)
+            renderer->getSceneView(0)->getRenderStage()->setCameraRequiresSetUp(true);
     }
     void prepareSecondPass()
     {
@@ -87,8 +101,7 @@ struct DeferredCamera::PImpl
         secondPassCamera_->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
         secondPassCamera_->setViewMatrix(osg::Matrix::identity());
 
-        // set viewport
-        secondPassCamera_->setViewport(0, 0, 512, 512);//tex_width, tex_height);
+        secondPassCamera_->setViewport(0, 0, defaultWidth, defaultHeight);
     }
     void resizeRTTQuad(uint32_t tex_width, uint32_t tex_height)
     {
@@ -99,6 +112,10 @@ struct DeferredCamera::PImpl
         quadTexCoords->push_back(osg::Vec2(0, tex_height));
 
         fullScreenQuad_->setTexCoordArray(0, quadTexCoords.get());
+        osg::StateSet* stateset = fullScreenQuad_->getOrCreateStateSet();
+        stateset->getUniform("width")->set(tex_width);
+        stateset->getUniform("height")->set(tex_height);
+
     }
     // The quad geometry is used by the render to texture camera to generate multiple textures.
     osg::Group* createRTTQuad()
@@ -128,6 +145,8 @@ struct DeferredCamera::PImpl
         {
             static const char *shaderSource = {
                 "#extension GL_ARB_texture_rectangle : enable\n"
+                "uniform uint width;\n"
+                "uniform uint height;\n"
                 "uniform sampler2DRect textureID0;\n"
                 "uniform sampler2DRect textureID1;\n"
                 "uniform sampler2DRect textureID2;\n"
@@ -135,7 +154,7 @@ struct DeferredCamera::PImpl
                 "void main(void)\n"
                 "{\n"
                 "    gl_FragData[0] = \n"
-                "          vec4(gl_TexCoord[0].st/512, 0.2, 1) + \n"
+                "          vec4(gl_TexCoord[0].s / width, gl_TexCoord[0].s / height, 0.2, 1) + \n"
                 "          vec4(texture2DRect(textureID2, gl_TexCoord[0].st).rgb, 1);  \n"
                 "}\n"
             };
@@ -148,6 +167,8 @@ struct DeferredCamera::PImpl
             {
                 stateset->setTextureAttributeAndModes(std::distance(fboTextures_.cbegin(), textureIte), textureIte->get(), osg::StateAttribute::ON);
             }
+            stateset->addUniform(new osg::Uniform("width", defaultWidth));
+            stateset->addUniform(new osg::Uniform("height", defaultHeight));
             stateset->addUniform(new osg::Uniform("textureID0", 0));
             stateset->addUniform(new osg::Uniform("textureID1", 1));
             stateset->addUniform(new osg::Uniform("textureID2", 2));
@@ -155,26 +176,51 @@ struct DeferredCamera::PImpl
         }
         return topGroup.release();
     }
-
+    void installResizeHandler(osg::GraphicsContext& graphicsContext)
+    {
+        previousResizedCallback_ = graphicsContext.getResizedCallback();
+        graphicsContext.setResizedCallback(this);
+    }
+    osg::Camera&                    mainCamera_; // don't hold a pointer to our own object
     osg::ref_ptr<osg::StateSet>     mrtStateSet_;
     osg::ref_ptr<osg::Geometry>     fullScreenQuad_;
     osg::ref_ptr<osg::Camera>       secondPassCamera_;
     typedef std::deque<osg::ref_ptr<osg::TextureRectangle> > PBOTextures;
     PBOTextures                     fboTextures_;
+    osg::GraphicsContext::ResizedCallback*      previousResizedCallback_;
+private:
+    void resizedImplementation(GraphicsContext* gc, int x, int y, int width, int height)
+    {
+        resize(width, height);
+        resizeRTTQuad(width, height);
+        // default implementation does not resize cameras bound to FBO
+        mainCamera_.setViewport(0, 0, width, height);
+
+        if (previousResizedCallback_)
+            previousResizedCallback_->resizedImplementation(gc, x, y, width, height);
+        else
+            gc->resizedImplementation(x, y, width, height);
+        // we don't want to change the projection matrix based on the aspect ratio, it is already handled
+        secondPassCamera_->setProjectionMatrix(osg::Matrix::ortho2D(0, 1, 0, 1));
+    }
+
 };
 
 DeferredCamera::DeferredCamera()
     : Camera()
-    , pImpl_(new PImpl())
 {
     constructorInit();
 }
 
 DeferredCamera::DeferredCamera(const Camera& other,const CopyOp& copyop)
     : Camera(other, copyop)
-    , pImpl_(new PImpl())
 {
     constructorInit();
+}
+
+DeferredCamera::~DeferredCamera()
+{
+    // NOTHING
 }
 
 osg::Camera* DeferredCamera::getSlaveCamera()
@@ -182,16 +228,64 @@ osg::Camera* DeferredCamera::getSlaveCamera()
     return pImpl_->secondPassCamera_;
 }
 
+void DeferredCamera::handleResize(osg::GraphicsContext& graphicsContext)
+{
+    pImpl_->installResizeHandler(graphicsContext);
+}
+
 void DeferredCamera::constructorInit()
 {
+    pImpl_ = new PImpl(*this);
     osg::StateSet* stateset = getOrCreateStateSet();
     stateset->setGlobalDefaults();
     setClearColor(osg::Vec4(0.2f, 0.0f, 0.3f, 0.0f));
     setClearMask(GL_COLOR_BUFFER_BIT |GL_DEPTH_BUFFER_BIT);
     setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
     setRenderOrder(osg::Camera::PRE_RENDER);
-    pImpl_->constuctStateSet(this, stateset);
-    pImpl_->resize(512, 512); // use default values for now
+    pImpl_->constuctStateSet(stateset);
     pImpl_->prepareSecondPass();
-    pImpl_->resizeRTTQuad(512, 512);
+    // set viewport
+//    pImpl_->secondPassCamera_->setViewport(0, 0, defaultWidth, defaultHeight);
+    pImpl_->resize(defaultWidth, defaultHeight); // use default values for now
+    pImpl_->resizeRTTQuad(defaultWidth, defaultHeight);
+}
+
+namespace
+{
+    osg::ref_ptr<DeferredCamera> createDeferredCamera()
+    {
+        osg::ref_ptr< osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits();
+        traits->x = 20; traits->y = 30;
+        traits->width = 800; traits->height = 450;
+        traits->windowDecoration = true;
+        traits->doubleBuffer = true;
+        traits->depth = true;
+        osg::ref_ptr<osg::GraphicsContext> gc = osg::GraphicsContext::createGraphicsContext( traits.get() );
+        if (! gc.valid())
+        {
+            osg::notify( osg::FATAL ) << "Unable to create OpenGL context." << std::endl;
+            return nullptr;
+        }
+
+        // Create a Camera that uses the above OpenGL context.
+        osg::ref_ptr<DeferredCamera> deferredCamera = new DeferredCamera();
+
+        deferredCamera->setGraphicsContext(gc.get());
+        deferredCamera->getSlaveCamera()->setGraphicsContext(gc.get());
+        // Must set perspective projection for fovy and aspect.
+        deferredCamera->setProjectionMatrix(osg::Matrix::perspective(30., (double)traits->width/(double)traits->height, 1., 100.));
+        deferredCamera->handleResize(*gc);
+        // Unlike OpenGL, OSG viewport does *not* default to window dimensions.
+        deferredCamera->setViewport(new osg::Viewport(0, 0, traits->width, traits->height));
+        deferredCamera->setComputeNearFarMode(osg::CullSettings::COMPUTE_NEAR_FAR_USING_BOUNDING_VOLUMES);
+        return deferredCamera;
+    }
+}
+DeferredCamera* install(osgViewer::View& view)
+{
+    osg::ref_ptr<DeferredCamera> camera = createDeferredCamera();
+    // use the deferred camera for the viewr
+    view.setCamera(camera.get());
+    view.addSlave(camera->getSlaveCamera(), false);
+    return camera.get();
 }
