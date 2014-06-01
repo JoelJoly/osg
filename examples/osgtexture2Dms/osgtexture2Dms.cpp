@@ -31,6 +31,8 @@
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
+#include <cassert>
+
 namespace
 {
 
@@ -67,6 +69,9 @@ public:
         : textureImage_(textureImage)
         , textureDepth_(textureDepth)
     {
+        blitTextureImage_ = new osg::Texture2D();
+        blitTextureImage_->setInternalFormat(textureImage->getInternalFormat());
+        blitTextureImage_->setTextureSize(textureImage->getTextureWidth(), textureImage->getTextureHeight());
         osg::StateSet* stateset = getOrCreateStateSet();
         stateset->setGlobalDefaults();
         setClearColor(osg::Vec4(0.3f, 0.2f, 0.1f, 1.f));
@@ -108,6 +113,9 @@ public:
         multiDepthResolveProgram_ = new osg::Program();
         multiDepthResolveProgram_->addShader(vshader.get());
         multiDepthResolveProgram_->addShader(fshader.get());
+
+        //setPreDrawCallback(new DrawCallback(*this, blitTextureImage_));
+//        setPreDrawCallback(new DrawCallback(textureImage, blitTextureImage_));
     }
     void setup(unsigned int sizeX, unsigned int sizeY, osg::Vec2d& screenSize)
     {
@@ -125,6 +133,72 @@ public:
         groupNode_->addChild(textureMSQuad.get());
     }
 
+private:
+    struct DrawCallback : public osg::Camera::DrawCallback
+    {
+        //DrawCallback(osg::Camera& camera, osg::ref_ptr<osg::Texture2D> blitTextureImage) : camera_(camera), blitTextureImage_(blitTextureImage) {}
+        DrawCallback(osg::ref_ptr<osg::Texture> sourceTextureImage, osg::ref_ptr<osg::Texture2D> blitTextureImage) : sourceTextureImage_(sourceTextureImage), blitTextureImage_(blitTextureImage) {}
+        virtual void operator()(osg::RenderInfo& renderInfo) const
+        {
+            osg::Camera::BufferComponent color0Buffer = osg::Camera::COLOR_BUFFER0;
+            //osg::Camera::Attachment* color0Attachment = 0;
+            //auto bufferAttachments = camera_.getBufferAttachmentMap();
+            //auto color0Ite = std::find_if(bufferAttachments.begin(), bufferAttachments.end(),
+            //    [&](osg::Camera::BufferAttachmentMap::reference ref) -> bool
+            //{
+            //    return ref.first == color0Buffer;
+            //});
+            //if (color0Ite == bufferAttachments.end())
+            //    return;
+            //color0Attachment = &color0Ite->second;
+            //assert(color0Attachment);
+            //assert(color0Attachment->_texture.valid() || color0Attachment->_image.valid());
+            osg::ref_ptr<osg::FrameBufferObject> blitSource(new osg::FrameBufferObject());
+            //blitSource->setAttachment(color0Buffer, osg::FrameBufferAttachment(*color0Attachment));
+            blitSource->setAttachment(color0Buffer, osg::FrameBufferAttachment(static_cast<osg::Texture2DMultisample*>(sourceTextureImage_.get())));
+
+            osg::State& state = *renderInfo.getState();
+            osg::FBOExtensions* fbo_ext = osg::FBOExtensions::instance(state.getContextID(),true);
+            bool fbo_supported = fbo_ext && fbo_ext->isSupported();
+            assert(fbo_supported);
+
+            blitSource->apply(state);
+            GLenum fbstatus = fbo_ext->glCheckFramebufferStatus(GL_FRAMEBUFFER_EXT);
+            if (fbstatus != GL_FRAMEBUFFER_COMPLETE_EXT)
+            {
+                OSG_NOTICE<<"DisplayTextureCamera draw callback source FBO status = 0x"<<std::hex<<fbstatus<<std::dec<<std::endl;
+            }
+
+                //setDrawBuffer(GL_NONE, false );
+                //setReadBuffer(GL_NONE, false );
+            osg::ref_ptr<osg::FrameBufferObject> blitDestination(new osg::FrameBufferObject());
+//blitDestination->setAttachment(color0Buffer, osg::FrameBufferAttachment(blitTextureImage_.get()));
+blitDestination->setAttachment(osg::Camera::COLOR_BUFFER0,
+    osg::FrameBufferAttachment(new osg::RenderBuffer(sourceTextureImage_->getTextureWidth(),
+    sourceTextureImage_->getTextureHeight(), sourceTextureImage_->getInternalFormat(), 8, 0)));
+            blitDestination->apply(state);
+            fbstatus = fbo_ext->glCheckFramebufferStatus(GL_FRAMEBUFFER_EXT);
+            if (fbstatus != GL_FRAMEBUFFER_COMPLETE_EXT)
+            {
+                OSG_NOTICE<<"DisplayTextureCamera draw callback destination FBO status = 0x"<<std::hex<<fbstatus<<std::dec<<std::endl;
+            }
+
+            blitSource->apply(state, osg::FrameBufferObject::READ_FRAMEBUFFER);
+            blitDestination->apply(state, osg::FrameBufferObject::DRAW_FRAMEBUFFER);
+
+            glReadBuffer(GL_COLOR_ATTACHMENT0_EXT);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
+
+            fbo_ext->glBlitFramebuffer(
+                0, 0, static_cast<GLint>(blitTextureImage_->getTextureWidth()), static_cast<GLint>(blitTextureImage_->getTextureHeight()),
+                0, 0, static_cast<GLint>(blitTextureImage_->getTextureWidth()), static_cast<GLint>(blitTextureImage_->getTextureHeight()),
+                GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            state.checkGLErrors("DisplayTextureCamera draw callback glBlitFramebuffer error");
+        }
+        osg::ref_ptr<osg::Texture2D> blitTextureImage_;
+        //osg::Camera& camera_;
+        osg::ref_ptr<osg::Texture> sourceTextureImage_;
+    };
 private:
    static osg::ref_ptr<osg::Node> createTexturedQuad(osg::ref_ptr<osg::Texture> textureImage, osg::Vec2d quadSize, osg::Vec2d screenSize, unsigned int position)
    {
@@ -169,6 +243,7 @@ private:
 private:
     osg::ref_ptr<osg::Texture> textureImage_;
     osg::ref_ptr<osg::Texture> textureDepth_;
+    osg::ref_ptr<osg::Texture2D> blitTextureImage_;
     osg::ref_ptr<osg::Group> groupNode_;
     osg::ref_ptr<osg::Program> monoColorResolveProgram_;
     osg::ref_ptr<osg::Program> multiColorResolveProgram_;
@@ -208,7 +283,7 @@ public:
 
     void createDisplayTextureCamera(osgViewer::Viewer& viewer)
     {
-        osg::ref_ptr<DisplayTextureCamera> camera = new DisplayTextureCamera(texture2DImage_, texture2DDepth_, sampleCount_);
+        osg::ref_ptr<DisplayTextureCamera> camera(new DisplayTextureCamera(texture2DImage_, texture2DDepth_, sampleCount_));
         osg::GraphicsContext* gc = viewer.getCamera()->getGraphicsContext();
         camera->setGraphicsContext(gc);
         gc->getState()->setUseModelViewAndProjectionUniforms(true);
